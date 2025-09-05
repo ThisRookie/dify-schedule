@@ -2,15 +2,14 @@ name: Auto
 
 on:
   schedule:
-    - cron: "*/3 * * * *"   # 每3分钟（UTC）；北京/新加坡(+8)同样每3分钟执行
+    - cron: "*/3 * * * *"   # 每3分钟触发（UTC；与时区无关）
   workflow_dispatch:
 
 env:
-  DIFY_TOKENS: ${{ secrets.DIFY_TOKENS }}         # Workflow API Key（可用逗号分隔多个）
-  DIFY_BASE_URL: ${{ secrets.DIFY_BASE_URL }}     # 例如: https://api.dify.ai/v1
-  DIFY_INPUTS: ${{ secrets.DIFY_INPUTS }}         # 形如 {"question":"hi","customer_id":"123"}
-  DIFY_USER: dify-schedule                        # 可自定义
-  # 其他通知相关 secrets ...
+  DIFY_TOKENS: ${{ secrets.DIFY_TOKENS }}         # 必填：Workflow API Key，多个用逗号分隔
+  DIFY_BASE_URL: ${{ secrets.DIFY_BASE_URL }}     # 必填：例如 https://api.dify.ai/v1 （务必包含 /v1）
+  DIFY_INPUTS: ${{ secrets.DIFY_INPUTS }}         # 必填：JSON字符串，如 {"question":"hi","customer_id":"123"}
+  DIFY_USER: dify-schedule                        # 可选：标识调用用户
 
 jobs:
   DifyWorkflow:
@@ -18,14 +17,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'      # Node 20，自带 fetch；不使用 yarn 缓存，避免 yarn.lock 报错
+
+      # 若未设置 DIFY_INPUTS，则默认 {}
+      - name: Default DIFY_INPUTS if empty
+        run: |
+          if [ -z "${DIFY_INPUTS}" ]; then
+            echo "DIFY_INPUTS is empty, defaulting to {}"
+            echo 'DIFY_INPUTS={}' >> $GITHUB_ENV
+          fi
+
+      # 基础校验 & JSON 校验（防止 400）
       - name: Validate env
         run: |
           test -n "${DIFY_TOKENS}" || (echo "DIFY_TOKENS is empty" && exit 1)
           test -n "${DIFY_BASE_URL}" || (echo "DIFY_BASE_URL is empty" && exit 1)
           test -n "${DIFY_INPUTS}" || (echo "DIFY_INPUTS is empty" && exit 1)
-          node -e 'try{JSON.parse(process.env.DIFY_INPUTS);console.log("DIFY_INPUTS is valid JSON")}catch(e){console.error("DIFY_INPUTS invalid JSON:", e.message);process.exit(1)}'
+          node -e 'try{const v=process.env.DIFY_INPUTS; const o=JSON.parse(v); if(typeof o!=="object"||o===null) throw new Error("not object"); console.log("DIFY_INPUTS OK");}catch(e){console.error("DIFY_INPUTS invalid JSON:", e.message); process.exit(1)}'
+          case "${DIFY_BASE_URL}" in
+            *"/v1" ) echo "DIFY_BASE_URL OK";;
+            * ) echo "⚠️ 建议 DIFY_BASE_URL 以 /v1 结尾，例如 https://api.dify.ai/v1";;
+          esac
 
-      - name: Install & Run
-        run: |
-          yarn --frozen-lockfile
-          yarn workflowDify
+      # 直接用 node 跑（零依赖），无需 yarn.lock
+      - name: Run Dify workflow (streaming)
+        run: node workflow/dify.js
