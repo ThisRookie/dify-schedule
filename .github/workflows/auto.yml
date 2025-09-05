@@ -21,6 +21,9 @@ jobs:
         with:
           node-version: '20'      # Node 20，自带 fetch；不使用 yarn 缓存，避免 yarn.lock 报错
 
+      - name: Install deps
+        run: npm install nodemailer
+
       # 若未设置 DIFY_INPUTS，则默认 {}
       - name: Default DIFY_INPUTS if empty
         run: |
