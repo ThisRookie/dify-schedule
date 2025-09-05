@@ -2,32 +2,35 @@ name: Auto
 
 on:
   schedule:
-    - cron: "30 22 * * *" # 北京时间上午06:30
+    - cron: "*/3 * * * *"   # 每3分钟（UTC）；北京/新加坡(+8)同样每3分钟执行
   workflow_dispatch:
 
 env:
-  DIFY_TOKENS: ${{ secrets.DIFY_TOKENS }}
-  DIFY_BASE_URL: ${{ secrets.DIFY_BASE_URL }}
-  DIFY_INPUTS: ${{ secrets.DIFY_INPUTS }}
-  EMAIL_USER: ${{ secrets.EMAIL_USER }}
-  EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-  EMAIL_TO: ${{ secrets.EMAIL_TO }}
-  DINGDING_WEBHOOK: ${{ secrets.DINGDING_WEBHOOK }}
-  PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-  WEIXIN_WEBHOOK: ${{ secrets.WEIXIN_WEBHOOK }}
-  SERVERPUSHKEY: ${{ secrets.SERVERPUSHKEY }}
-  FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-  AIBOTK_KEY: ${{ secrets.AIBOTK_KEY }}
-  AIBOTK_ROOM_RECIVER: ${{ secrets.AIBOTK_ROOM_RECIVER }}
-  AIBOTK_CONTACT_RECIVER: ${{ secrets.AIBOTK_CONTACT_RECIVER }}
+  DIFY_TOKENS: ${{ secrets.DIFY_TOKENS }}         # Workflow API Key（可用逗号分隔多个）
+  DIFY_BASE_URL: ${{ secrets.DIFY_BASE_URL }}     # 例如: https://api.dify.ai/v1
+  DIFY_INPUTS: ${{ secrets.DIFY_INPUTS }}         # 形如 {"question":"hi","customer_id":"123"}
+  DIFY_USER: dify-schedule                        # 可自定义
+  # 其他通知相关 secrets ...
 
 jobs:
   DifyWorkflow:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
-      - name: Run Project
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+
+      - name: Validate env
         run: |
-          yarn
+          test -n "${DIFY_TOKENS}" || (echo "DIFY_TOKENS is empty" && exit 1)
+          test -n "${DIFY_BASE_URL}" || (echo "DIFY_BASE_URL is empty" && exit 1)
+          test -n "${DIFY_INPUTS}" || (echo "DIFY_INPUTS is empty" && exit 1)
+          node -e 'try{JSON.parse(process.env.DIFY_INPUTS);console.log("DIFY_INPUTS is valid JSON")}catch(e){console.error("DIFY_INPUTS invalid JSON:", e.message);process.exit(1)}'
+
+      - name: Install & Run
+        run: |
+          yarn --frozen-lockfile
           yarn workflowDify
