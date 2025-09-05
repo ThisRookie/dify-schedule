@@ -100,43 +100,48 @@ export class DifyClient {
     this.apiKey = apiKey;
   }
 
-  async sendRequest(
-    method,
-    endpoint,
-    data = null,
-    params = null,
-    stream = false,
-    headerParams = {}
-  ) {
-    const headers = {
-      Authorization: `Bearer ${this.apiKey}`,
-      "Content-Type": "application/json",
-      ...headerParams,
-    };
+async sendRequest(
+  method,
+  endpoint,
+  data = null,
+  params = null,
+  stream = false,
+  headerParams = {}
+) {
+  const headers = {
+    Authorization: `Bearer ${this.apiKey}`,
+    "Content-Type": "application/json",
+    ...headerParams,
+  };
 
-    const url = new URL(this.baseUrl + endpoint);
-    if (params && typeof params === "object") {
-      Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null) url.searchParams.set(k, v);
-      });
+  const url = new URL(this.baseUrl + endpoint);
+  if (params && typeof params === "object") {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) url.searchParams.set(k, v);
+    });
+  }
+
+  const init = { method, headers };
+  if (method !== "GET" && data !== null && data !== undefined) {
+    if (headers["Content-Type"] === "multipart/form-data") {
+      delete headers["Content-Type"];
+      init.body = data; // FormData
+    } else {
+      init.body = JSON.stringify(data);
     }
+  }
 
-    const init = { method, headers };
-    if (method !== "GET" && data !== null && data !== undefined) {
-      // multipart 由调用方传入 headerParams 覆盖 Content-Type，并直接传 FormData
-      if (headers["Content-Type"] === "multipart/form-data") {
-        // 在原生 fetch 中，设置 multipart 的 Content-Type 需让浏览器/Node 自行带 boundary。
-        // 因此这里删除手动 Content-Type，允许 fetch 自动设置。
-        delete headers["Content-Type"];
-        init.body = data; // data 应该是一个 FormData
-      } else {
-        init.body = JSON.stringify(data);
-      }
-    }
+  const res = await fetch(url, init);
 
-    const res = await fetch(url, init);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${method} ${url.pathname} 失败：${res.status} ${res.statusText}\n${text}`);
+  }
 
-    if (!res.ok) {
-      // 尽量返回服务端的错误体，帮助定位 400 等问题
-      const text = await res.text().catch(() => "");
-      throw new Error(`${me
+  if (stream) {
+    return { data: res.body }; // ReadableStream
+  }
+
+  const json = await res.json().catch(() => ({}));
+  return { data: json };
+}
