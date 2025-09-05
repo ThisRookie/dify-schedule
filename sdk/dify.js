@@ -1,4 +1,7 @@
-import axios from "axios";
+// sdk/dify.js (ESM, Node 18+/20)
+// 零依赖：使用原生 fetch 与 Web Streams 解析（兼容流式）
+// 建议 DIFY_BASE_URL 形如 https://api.dify.ai/v1
+
 export const BASE_URL = "https://api.dify.ai/v1";
 
 export const routes = {
@@ -81,13 +84,16 @@ export const routes = {
     method: "GET",
     url: (task_id) => `/workflows/run/${task_id}`,
   },
-
 };
 
 export class DifyClient {
   constructor(apiKey, baseUrl = BASE_URL) {
     this.apiKey = apiKey;
-    this.baseUrl = baseUrl;
+    this.baseUrl = (baseUrl || "").replace(/\/+$/, "");
+    if (!this.baseUrl) throw new Error("DIFY_BASE_URL 为空");
+    if (!this.baseUrl.endsWith("/v1")) {
+      console.warn("⚠️ 建议 DIFY_BASE_URL 以 /v1 结尾，例如 https://api.dify.ai/v1");
+    }
   }
 
   updateApiKey(apiKey) {
@@ -103,362 +109,34 @@ export class DifyClient {
     headerParams = {}
   ) {
     const headers = {
-      ...{
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      ...headerParams
+      Authorization: `Bearer ${this.apiKey}`,
+      "Content-Type": "application/json",
+      ...headerParams,
     };
 
-    const url = `${this.baseUrl}${endpoint}`;
-    let response;
-    if (stream) {
-      response = await axios({
-        method,
-        url,
-        data,
-        params,
-        headers,
-        responseType: "stream",
-      });
-    } else {
-      response = await axios({
-        method,
-        url,
-        ...(method !== "GET" && { data }),
-        params,
-        headers,
-        responseType: "json",
+    const url = new URL(this.baseUrl + endpoint);
+    if (params && typeof params === "object") {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) url.searchParams.set(k, v);
       });
     }
 
-    return response;
-  }
-
-  messageFeedback(message_id, rating, user) {
-    const data = {
-      rating,
-      user,
-    };
-    return this.sendRequest(
-      routes.feedback.method,
-      routes.feedback.url(message_id),
-      data
-    );
-  }
-
-  getApplicationParameters(user) {
-    const params = { user };
-    return this.sendRequest(
-      routes.application.method,
-      routes.application.url(),
-      null,
-      params
-    );
-  }
-
-  fileUpload(data) {
-    return this.sendRequest(
-      routes.fileUpload.method,
-      routes.fileUpload.url(),
-      data,
-      null,
-      false,
-      {
-        "Content-Type": 'multipart/form-data'
+    const init = { method, headers };
+    if (method !== "GET" && data !== null && data !== undefined) {
+      // multipart 由调用方传入 headerParams 覆盖 Content-Type，并直接传 FormData
+      if (headers["Content-Type"] === "multipart/form-data") {
+        // 在原生 fetch 中，设置 multipart 的 Content-Type 需让浏览器/Node 自行带 boundary。
+        // 因此这里删除手动 Content-Type，允许 fetch 自动设置。
+        delete headers["Content-Type"];
+        init.body = data; // data 应该是一个 FormData
+      } else {
+        init.body = JSON.stringify(data);
       }
-    );
-  }
-
-  textToAudio(text, user, streaming = false) {
-    const data = {
-      text,
-      user,
-      streaming
-    };
-    return this.sendRequest(
-      routes.textToAudio.method,
-      routes.textToAudio.url(),
-      data,
-      null,
-      streaming
-    );
-  }
-
-  getMeta(user) {
-    const params = { user };
-    return this.sendRequest(
-      routes.meta.method,
-      routes.meta.url(),
-      null,
-      params
-    );
-  }
-}
-
-export class CompletionClient extends DifyClient {
-  createCompletionMessage(inputs, user, stream = false, files = null) {
-    const data = {
-      inputs,
-      user,
-      response_mode: stream ? "streaming" : "blocking",
-      files,
-    };
-    return this.sendRequest(
-      routes.createCompletionMessage.method,
-      routes.createCompletionMessage.url(),
-      data,
-      null,
-      stream
-    );
-  }
-
-  runWorkflow(inputs, user, stream = false, files = null) {
-    const data = {
-      inputs,
-      user,
-      response_mode: stream ? "streaming" : "blocking",
-    };
-    return this.sendRequest(
-      routes.runWorkflow.method,
-      routes.runWorkflow.url(),
-      data,
-      null,
-      stream
-    );
-  }
-}
-
-export class ChatClient extends DifyClient {
-  createChatMessage(
-    inputs,
-    query,
-    user,
-    stream = false,
-    conversation_id = null,
-    files = null
-  ) {
-    const data = {
-      inputs,
-      query,
-      user,
-      response_mode: stream ? "streaming" : "blocking",
-      files,
-    };
-    if (conversation_id) data.conversation_id = conversation_id;
-
-    return this.sendRequest(
-      routes.createChatMessage.method,
-      routes.createChatMessage.url(),
-      data,
-      null,
-      stream
-    );
-  }
-
-  getSuggested(message_id, user) {
-    const data = { user };
-    return this.sendRequest(
-      routes.getSuggested.method,
-      routes.getSuggested.url(message_id),
-      data
-    );
-  }
-
-  stopMessage(task_id, user) {
-    const data = { user };
-    return this.sendRequest(
-      routes.stopChatMessage.method,
-      routes.stopChatMessage.url(task_id),
-      data
-    );
-  }
-
-  getConversations(user, first_id = null, limit = null, pinned = null) {
-    const params = { user, first_id: first_id, limit, pinned };
-    return this.sendRequest(
-      routes.getConversations.method,
-      routes.getConversations.url(),
-      null,
-      params
-    );
-  }
-
-  getConversationMessages(
-    user,
-    conversation_id = "",
-    first_id = null,
-    limit = null
-  ) {
-    const params = { user };
-
-    if (conversation_id) params.conversation_id = conversation_id;
-
-    if (first_id) params.first_id = first_id;
-
-    if (limit) params.limit = limit;
-
-    return this.sendRequest(
-      routes.getConversationMessages.method,
-      routes.getConversationMessages.url(),
-      null,
-      params
-    );
-  }
-
-  renameConversation(conversation_id, name, user, auto_generate) {
-    const data = { name, user, auto_generate };
-    return this.sendRequest(
-      routes.renameConversation.method,
-      routes.renameConversation.url(conversation_id),
-      data
-    );
-  }
-
-  deleteConversation(conversation_id, user) {
-    const data = { user };
-    return this.sendRequest(
-      routes.deleteConversation.method,
-      routes.deleteConversation.url(conversation_id),
-      data
-    );
-  }
-
-
-  audioToText(data) {
-    return this.sendRequest(
-      routes.audioToText.method,
-      routes.audioToText.url(),
-      data,
-      null,
-      false,
-      {
-        "Content-Type": 'multipart/form-data'
-      }
-    );
-  }
-
-}
-
-export class WorkflowClient extends DifyClient {
-  run(inputs,user,stream) {
-    const data = {
-      inputs,
-      response_mode: stream ? "streaming" : "blocking",
-      user
-    };
-
-    return this.sendRequest(
-        routes.runWorkflow.method,
-        routes.runWorkflow.url(),
-        data,
-        null,
-        stream
-    );
-  }
-
-  stop(task_id, user) {
-    const data = { user };
-    return this.sendRequest(
-      routes.stopWorkflow.method,
-      routes.stopWorkflow.url(task_id),
-      data
-    );
-  }
-  info(user) {
-    const params = { user };
-    return this.sendRequest(
-      routes.getWorkflowInfo.method,
-      routes.getWorkflowInfo.url(),
-      null,
-      params
-    );
-  }
-  result(task_id) {
-    return this.sendRequest(
-      routes.getWorkflowResult.method,
-      routes.getWorkflowResult.url(task_id),
-      null
-    );
-  }
-  async getWorkflowResult(input, user, isStream) {
-    const res = await this.run(input, user, isStream)
-    function unicodeToChar(text) {
-        if (!text)
-          return ''
-
-        return text.replace(/\\u[0-9a-f]{4}/g, (_match, p1) => {
-          return String.fromCharCode(parseInt(p1, 16))
-        })
-      }
-    const asyncSSE = (stream) => {
-        return new Promise((resolve, reject) => {
-          let task_id = ''
-          try {
-            stream.on('data', data => {
-              const streams = new TextDecoder('utf-8').decode(data, { stream: true }).split('\n')
-              streams.forEach(stream => {
-                if (stream && stream.startsWith('data: ')) {
-                  let res = {}
-                  try {
-                    res = JSON.parse(stream.substring(6)) || {}
-                  } catch (e) {
-                    return
-                  }
-
-                  if (!res.event || res.event === 'error' || res.status === 400) {
-                    console.log(`工作流输出错误code:${res.code}`, res.message)
-                    return
-                  }
-                  if (res.event === 'workflow_started' || res.event === 'tts_message') {
-                      task_id = res?.workflow_run_id
-                      console.log('工作流开始执行')
-                  }
-                  if (res.event === 'node_started' || res.event=== 'node_finished') {
-                    task_id = res?.workflow_run_id
-                    console.log('工作流node节点执行任务中')
-                  }
-                  if (res.event === 'workflow_finished' || res.event === 'tts_message_end') {
-                    console.log('工作流执行完毕，正在组装数据进行发送')
-                    task_id = res?.workflow_run_id
-                  }
-                }
-              })
-            })
-            stream.on('end', async () => {
-
-              const { data } = task_id ? await this.result(task_id) : { data: { outputs: '' } }
-              console.log('获取工作流执行结果', task_id, JSON.stringify(data.outputs))
-              let outputs = {}
-              if(data.outputs) {
-                  try {
-                    outputs = JSON.parse(data.outputs)
-                  } catch (error) {
-                    console.log(`获取工作流执行结果,失败:${error}`)
-                  }
-              }
-
-              resolve({ text: outputs?.text, task_id: task_id })
-            })
-          } catch (e) {
-            resolve({ text: `Dify工作流执行出错，${e}`, task_id: '' })
-          }
-        })
     }
-    if (!isStream) {
-      if (res.data.code) {
-        console.log('Dify 工作流执行失败', res.data.code, res.data.message)
-        return Promise.reject(res.message)
-      }
-      const response = res.data
-      return {
-            text: response?.data?.outputs?.text || '',
-            task_id: response?.task_id,
-          }
-    } else {
-        console.log('进入Dify工作流，请耐心等待...')
-        const result = await asyncSSE(res.data)
-        return result
-    }
-  }
-}
+
+    const res = await fetch(url, init);
+
+    if (!res.ok) {
+      // 尽量返回服务端的错误体，帮助定位 400 等问题
+      const text = await res.text().catch(() => "");
+      throw new Error(`${me
